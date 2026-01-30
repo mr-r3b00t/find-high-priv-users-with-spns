@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Active Directory RC4 Disablement Report – January 2026 (with Rollback Options)</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 30px 20px;
+            background-color: #f9fbfc;
+        }
+        header {
+            text-align: center;
+            border-bottom: 3px solid #2c5282;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        h1, h2, h3 {
+            color: #2c5282;
+        }
+        h1 {
+            margin: 0;
+            font-size: 2.2em;
+        }
+        .date {
+            font-size: 1.1em;
+            color: #4a5568;
+            margin-top: 10px;
+        }
+        .section {
+            margin-bottom: 40px;
+        }
+        pre, code {
+            background-color: #edf2f7;
+            border: 1px solid #cbd5e0;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            overflow-x: auto;
+        }
+        .code-block {
+            margin: 15px 0;
+        }
+        .warning {
+            background-color: #fefcbf;
+            color: #744210;
+            border-left: 5px solid #d69e2e;
+            padding: 15px 20px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .important {
+            background-color: #e6fffa;
+            color: #0c5460;
+            border-left: 5px solid #319795;
+            padding: 15px 20px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .rollback {
+            background-color: #fff5f5;
+            color: #742a2a;
+            border-left: 5px solid #e53e3e;
+            padding: 15px 20px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #cbd5e0;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #2c5282;
+            color: white;
+        }
+        ul, ol {
+            margin: 10px 0;
+            padding-left: 25px;
+        }
+        .inline-code {
+            background-color: #edf2f7;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        footer {
+            text-align: center;
+            margin-top: 50px;
+            padding-top: 20px;
+            border-top: 1px solid #cbd5e0;
+            color: #718096;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Active Directory: Disabling RC4 for User Accounts</h1>
+        <div class="date">Report Date: January 30, 2026</div>
+        <p>Guidance on per-user RC4 disablement, AES key regeneration (including same-password reset), impacts for SPN/service accounts, and rollback/re-enable options. Updated with current Microsoft roadmap and CVE-2026-20833 phase details.</p>
+    </header>
+
+    <div class="section">
+        <h2>Current Status – Microsoft RC4 Deprecation Roadmap (as of Jan 2026)</h2>
+        <p>Microsoft is phasing out RC4 in Kerberos due to cryptographic weaknesses and vulnerabilities (e.g., CVE-2026-20833 facilitating Kerberoasting). Key milestones:</p>
+        <ul>
+            <li>January 2026+: New auditing + temporary registry key <span class="inline-code">RC4DefaultDisablementPhase</span> for opt-in enforcement.</li>
+            <li>April 2026: Enforcement mode begins – RC4 blocked by default on DCs unless explicitly allowed per account/KDC.</li>
+            <li>July 2026: Final enforcement – registry key removed; RC4 disabled domain-wide by default on Server 2008+ DCs (exceptions require explicit per-account config).</li>
+        </ul>
+        <div class="important">
+            <strong>Recommendation:</strong> Proactively disable RC4 on service accounts now, regenerate AES keys, and prepare for mid-2026 enforcement to avoid outages.
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Disabling RC4 on a Specific User Account</h2>
+        <p>Modify <span class="inline-code">msDS-SupportedEncryptionTypes</span> bitmask (4=RC4, 8=AES128, 16=AES256). Set to 24 (AES only) to disable RC4.</p>
+
+        <h3>PowerShell Method</h3>
+        <div class="code-block">
+            <pre><code># Disable RC4 (enable AES only)
+Set-ADUser -Identity "svc-account" -Replace @{'msDS-SupportedEncryptionTypes'=24}
+
+# Reset password to generate AES keys (see same-password technique below)</code></pre>
+        </div>
+
+        <h3>GUI Method</h3>
+        <ol>
+            <li>ADUC: User Properties → Account tab → Check AES 128/256 boxes.</li>
+            <li>ADSI Edit: Set <span class="inline-code">msDS-SupportedEncryptionTypes</span> to decimal 24 (hex 0x18).</li>
+            <li>Reset password.</li>
+        </ol>
+    </div>
+
+    <div class="section">
+        <h2>Resetting Password to the SAME Value – Minimal Disruption</h2>
+        <p>Resetting to the identical password regenerates Kerberos keys (including AES) without changing credentials. Ideal for service accounts.</p>
+        
+        <div class="important">
+            <strong>Benefit:</strong> NTLM hash unchanged; Kerberos keys updated in <span class="inline-code">supplementalCredentials</span>. Services continue after ticket renewal.
+        </div>
+
+        <h3>PowerShell Example</h3>
+        <div class="code-block">
+            <pre><code>$pwd = "ExistingStrongP@ssw0rd123!"  # From vault/owner
+$securePwd = ConvertTo-SecureString $pwd -AsPlainText -Force
+
+Set-ADAccountPassword -Identity "svc-account" -Reset -NewPassword $securePwd
+
+# Verify
+Get-ADUser -Identity "svc-account" -Properties PasswordLastSet, msDS-SupportedEncryptionTypes</code></pre>
+        </div>
+
+        <ul>
+            <li>Replicate AD: <span class="inline-code">repadmin /syncall</span></li>
+            <li>Monitor events (ID 3/27) on DCs.</li>
+            <li>Rare: Reset twice for old accounts.</li>
+        </ul>
+
+        <div class="warning">
+            <strong>Caution:</strong> Test first. Legacy AES-incompatible clients will still fail.
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Rollback and Re-Enable Options</h2>
+        <p>If disabling RC4 causes issues (e.g., legacy service failures), rollback is straightforward per account. Domain-wide rollback depends on the current phase.</p>
+
+        <h3>Per-Account Rollback (Re-Enable RC4)</h3>
+        <p>Revert by including RC4 in the bitmask (add 4). Common values:</p>
+        <table>
+            <tr><th>Value (Decimal)</th><th>Hex</th><th>Encryption Types Enabled</th><th>Use Case</th></tr>
+            <tr><td>28</td><td>0x1C</td><td>AES128 + AES256 + RC4</td><td>Re-enable RC4 while keeping AES (recommended interim)</td></tr>
+            <tr><td>4</td><td>0x04</td><td>RC4 only</td><td>Legacy-only fallback (temporary!)</td></tr>
+            <tr><td>31</td><td>0x1F</td><td>All (AES128/256 + RC4 + others)</td><td>Max compatibility (not recommended long-term)</td></tr>
+        </table>
+
+        <div class="code-block">
+            <pre><code># Re-enable RC4 (AES + RC4)
+Set-ADUser -Identity "svc-account" -Replace @{'msDS-SupportedEncryptionTypes'=28}
+
+# Optional: Reset password again to ensure keys regenerate
+# ... (same as above)</code></pre>
+        </div>
+
+        <p>After change, reset password if needed. This works even after domain-wide enforcement (July 2026+), as Microsoft allows explicit per-account RC4 exceptions indefinitely (though strongly discouraged long-term).</p>
+
+        <h3>Domain-Wide Rollback (Pre-July 2026)</h3>
+        <p>While <span class="inline-code">RC4DefaultDisablementPhase</span> registry exists (on DCs: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Kerberos\Parameters):</p>
+        <ul>
+            <li>Set to 0 or delete → Reverts to legacy (RC4 allowed by default; audit off).</li>
+            <li>Set to 1 → Audit mode only (logs RC4 but allows it).</li>
+            <li>Restart KDC service or reboot DC for change to apply.</li>
+        </ul>
+        <div class="rollback">
+            <strong>Post-July 2026:</strong> Registry key removed in updates; no domain-wide rollback via registry. Use per-account <span class="inline-code">msDS-SupportedEncryptionTypes</span> exceptions only. Plan legacy remediation to avoid permanent exceptions.
+        </div>
+
+        <div class="warning">
+            <strong>Best Practice:</strong> Treat re-enables as temporary. Audit RC4 usage post-rollback and plan upgrades for incompatible systems.
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Impacts for Accounts with SPNs (Service Accounts)</h2>
+        <table>
+            <tr><th>Scenario</th><th>Impact</th><th>Mitigation / Rollback</th></tr>
+            <tr><td>Modern clients/apps</td><td>None (AES auto-negotiated)</td><td>N/A</td></tr>
+            <tr><td>Legacy systems</td><td>Failures (KRB_ERR_ETYPE_NOTSUPP)</td><td>Re-enable RC4 per account (set bitmask incl. 4)</td></tr>
+            <tr><td>Kerberoasting risk</td><td>Reduced (AES harder to crack)</td><td>Positive outcome</td></tr>
+            <tr><td>Dependent services</td><td>Potential breakage</td><td>Audit Event ID 4769; rollback if needed</td></tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Summary & Recommendations</h2>
+        <ul>
+            <li>Set <span class="inline-code">msDS-SupportedEncryptionTypes = 24</span> per service account.</li>
+            <li>Use same-password reset for AES key generation without disruption.</li>
+            <li>Rollback: Revert bitmask to include 4 (e.g., 28); pre-July 2026 use registry for domain rollback.</li>
+            <li>Modern envs: Seamless; legacy: Upgrade or temporary exceptions.</li>
+            <li>Prepare for July 2026 – RC4 off by default; explicit config required for exceptions.</li>
+        </ul>
+    </div>
+
+    <footer>
+        <p>Based on Microsoft documentation (e.g., CVE-2026-20833 guidance, Detect/Remediate RC4 articles) and best practices as of January 30, 2026.<br>
+        Validate in your environment; monitor for updates.</p>
+    </footer>
+
+</body>
+</html>
