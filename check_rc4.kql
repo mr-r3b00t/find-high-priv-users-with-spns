@@ -1,0 +1,21 @@
+IdentityLogonEvents
+| where Timestamp > ago(30d)
+| where Protocol == "Kerberos"
+| extend ParsedSPN = parse_json(AdditionalFields).Spn
+| extend ParsedSEncType = parse_json(AdditionalFields).EncryptionType
+| summarize EventCount = count() by EncryptionType = tostring(ParsedSEncType), AccountName, DeviceName
+| join kind=leftouter (
+    DeviceInfo
+    | where Timestamp > ago(30d)
+    | extend IngestionTime = ingestion_time()
+    | summarize arg_max(IngestionTime, *) by DeviceName
+    | project DeviceName, OSVersion, OSPlatform
+) on DeviceName
+| project 
+    EncryptionType,
+    AccountName,
+    DeviceName,
+    EventCount,
+    LatestOSVersion = OSVersion,
+    LatestOSPlatform = OSPlatform
+| sort by EventCount desc
